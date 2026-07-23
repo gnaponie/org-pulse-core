@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import mongoose from 'mongoose';
 
 const { createRoleStore, normalizeEmail } = require('../role-store');
+const { roleAssignmentSchema } = require('../models/role');
 
 // Suppress console.log output in tests
 vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -247,5 +249,96 @@ describe('invalidateCache', () => {
     await roleStore.assignRole('user2@redhat.com', 'admin', 'test');
     data = await storage.read('roles.json');
     expect(data.assignments['user2@new.local']).toBeDefined();
+  });
+});
+
+// ─── MongoDB-backed tests ───
+
+describe('role-store (MongoDB)', () => {
+  let connection;
+  let RoleModel;
+  const dbName = 'test_roles_' + process.pid;
+
+  beforeAll(async () => {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) return;
+    connection = await mongoose.createConnection(uri, { dbName });
+    RoleModel = connection.model('core__roles', roleAssignmentSchema, 'core__roles');
+  });
+
+  afterAll(async () => {
+    if (connection) {
+      await connection.db.dropDatabase();
+      await connection.close();
+    }
+  });
+
+  beforeEach(async () => {
+    if (RoleModel) await RoleModel.deleteMany({});
+  });
+
+  function makeMongoStore(opts = {}) {
+    if (!RoleModel) return null;
+    const storage = createMockStorage({});
+    const roleStore = createRoleStore(
+      (key) => storage.read(key),
+      (key, data) => storage.write(key, data),
+      { getAuthDomain: () => opts.authDomain || null, model: RoleModel }
+    );
+    return { roleStore, storage };
+  }
+
+  it.skipIf(!process.env.MONGODB_URI)('assigns and retrieves roles', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    const roles = await roleStore.getRoles('user@redhat.com');
+    expect(roles).toContain('admin');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('revokes roles', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    await roleStore.assignRole('other@redhat.com', 'admin', 'test');
+    const result = await roleStore.revokeRole('user@redhat.com', 'admin', 'test');
+    expect(result.roles).toEqual([]);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('normalizes emails with authDomain', async () => {
+    const { roleStore } = makeMongoStore({ authDomain: 'cluster.local' });
+    await roleStore.assignRole('user@redhat.com', 'admin', 'test');
+    const roles = await roleStore.getRoles('user@cluster.local');
+    expect(roles).toContain('admin');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('lists assignments', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('a@test.com', 'admin', 'test');
+    await roleStore.assignRole('b@test.com', 'team-admin', 'test');
+    const assignments = await roleStore.listAssignments();
+    expect(Object.keys(assignments)).toHaveLength(2);
+    expect(assignments['a@test.com'].roles).toContain('admin');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('gets admin emails', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('a@test.com', 'admin', 'test');
+    await roleStore.assignRole('b@test.com', 'team-admin', 'test');
+    const admins = await roleStore.getAdminEmails();
+    expect(admins).toEqual(['a@test.com']);
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('prevents removing last admin', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('solo@test.com', 'admin', 'test');
+    await expect(roleStore.revokeRole('solo@test.com', 'admin', 'test'))
+      .rejects.toThrow('Cannot remove the last admin');
+  });
+
+  it.skipIf(!process.env.MONGODB_URI)('addToSet prevents duplicate roles', async () => {
+    const { roleStore } = makeMongoStore();
+    await roleStore.assignRole('user@test.com', 'admin', 'test');
+    await roleStore.assignRole('user@test.com', 'admin', 'test');
+    const roles = await roleStore.getRoles('user@test.com');
+    expect(roles).toEqual(['admin']);
   });
 });
