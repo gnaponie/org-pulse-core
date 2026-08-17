@@ -73,6 +73,8 @@ The `async-mutex` layer exists because file I/O read-modify-write cycles can int
 
 **Phase 2 (core store migration):** Migrate stores one by one in separate PRs: role-store, team-store, field-store, audit-log, roster, people metrics, snapshots, contributions, config singletons. Add auto-migration logic. MongoDB becomes required.
 
+A store must be a factory before it can be migrated. The model is injected at start-up via `options.model`, so a store that exports bare functions has nowhere to receive it. `role-store` and `field-store` were already factories; `team-store` was not, and was converted first in its own PR (task 5.5a). Reads and writes must move together — migrating only the writes leaves every caller reading an empty file. Check the shape of a store before estimating its task.
+
 **Phase 3 (cleanup):** Remove `readFromStorage`, `writeToStorage`, `demo-storage.js`, `storage-mutex.js`, `async-mutex`. Publish as another major core version.
 
 Rollback at any phase: JSON files on PVC are never deleted. Wipe MongoDB, revert to previous core version, app starts with file storage.

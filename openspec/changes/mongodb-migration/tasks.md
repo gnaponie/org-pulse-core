@@ -33,6 +33,7 @@
 - [x] 5.2 Migrate `shared/server/role-store.js` to use the Role model, remove `rolesMutex`
 - [x] 5.3 Update role-store tests to use `mongodb-memory-server`
 - [x] 5.4 Create `shared/server/models/team.js` — Mongoose schema for teams
+- [x] 5.5a Convert `shared/server/team-store.js` to a `createTeamStore(storage, options)` factory and expose it as `context.teamStore`. Prerequisite for 5.5: the store exported bare functions taking `storage`, so there was nowhere to inject a model, and its ~15 call sites read teams directly — migrating only the writes would have left every team list reading an empty file. Pure refactor, no behaviour change. PR #97
 - [ ] 5.5 Migrate `shared/server/team-store.js` to use the Team model, remove `storageMutexes` and `acquireMultiLock`
 - [ ] 5.6 Update team-store tests to use `mongodb-memory-server`
 - [x] 5.7 Create `shared/server/models/field-definition.js` — Mongoose schema for field definitions
